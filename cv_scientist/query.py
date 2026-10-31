@@ -17,6 +17,8 @@ class ProjectQueryService:
         for o in evidence["observations"][:8]: lines.append(f"Observation {o.id}: {o.title} — {o.description}")
         for h in evidence["hypotheses"][:5]: lines.append(f"Hypothesis {h.id} [{h.status}]: {h.statement}")
         for n in evidence["notes"][:3]: lines.append(f"UserNote {n.id}: {n.text}")
+        for r in evidence.get("regressions", [])[:5]:
+            lines.append(f"Regression {r.id}: {r.experiment_id} vs {r.baseline_id}, {r.slice} {r.metric}: {r.previous_value} -> {r.current_value}")
         return "\n".join(lines)
     def ask(self, question: str) -> AgentStatement:
         evidence = self.retrieve(question)
@@ -26,6 +28,9 @@ class ProjectQueryService:
         refs = ([EvidenceRef("conclusion", c.id).to_dict() for c in evidence["conclusions"][:3]]
                 + [EvidenceRef("experiment", e.id).to_dict() for e in evidence["experiments"][:4]]
                 + [EvidenceRef("observation", o.id).to_dict() for o in evidence["observations"][:4]])
+        refs += [EvidenceRef("regression", r.id).to_dict() for r in evidence.get("regressions", [])[:3]]
+        refs += [EvidenceRef("hypothesis", h.id).to_dict() for h in evidence["hypotheses"][:3]]
+        refs += [EvidenceRef("note", n.id).to_dict() for n in evidence["notes"][:3]]
         if not context:
             text = "No relevant project evidence found in ResearchMemory for this question."
         else:

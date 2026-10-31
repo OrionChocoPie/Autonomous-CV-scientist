@@ -9,6 +9,7 @@ from pathlib import Path
 from .compare import compare_runs
 from .diagnose import diagnose
 from .query import ProjectQueryService
+from .predictions import load_predictions, match_boxes
 
 
 @dataclass
@@ -49,10 +50,13 @@ def _limit(value, maximum):
 
 
 class AnalysisTools:
+    definitions = TOOLS
+
     def __init__(self, workspace):
         self.ws = workspace
         self.memory = workspace.memory
         self.evidence = {}
+        self.require_citations = False
 
     def _ref(self, kind, identity, detail=""):
         ref = {"kind": kind, "id": identity, "detail": detail}
@@ -86,12 +90,16 @@ class AnalysisTools:
         exp = self._experiment(experiment_id)
         baseline = self.memory.working_baseline()
         if baseline: self._ref("experiment", baseline.id)
-        return diagnose(exp, baseline if baseline and baseline.id != exp.id else None).to_dict()
+        result = diagnose(exp, baseline if baseline and baseline.id != exp.id else None).to_dict()
+        for finding in result["findings"]:
+            for ref in finding["evidence"]:
+                if ref["kind"] == "artifact": self._ref("artifact", ref["id"], ref.get("detail", ""))
+        return result
 
     def search_memory(self, query):
         found = ProjectQueryService(self.memory).retrieve(_text(query, "query"))
         kinds = {"experiments": "experiment", "observations": "observation", "hypotheses": "hypothesis",
-                 "conclusions": "conclusion", "questions": "question", "notes": "note"}
+                 "conclusions": "conclusion", "questions": "question", "notes": "note", "regressions": "regression"}
         result = {}
         for group, objects in found.items():
             result[group] = []
@@ -101,25 +109,7 @@ class AnalysisTools:
 
     def _records(self, experiment_id):
         exp = self._experiment(experiment_id)
-        if not exp.run_dir: raise ValueError("Experiment has no local run directory")
-        root = Path(exp.run_dir).resolve()
-        path = (root / "predictions.json").resolve()
-        if not path.is_relative_to(root): raise ValueError("predictions.json must stay inside the run directory")
-        if path.stat().st_size > 8 * 1024 * 1024: raise ValueError("predictions.json exceeds the 8 MiB limit")
-        records = json.loads(path.read_text())
-        if not isinstance(records, list): raise ValueError("predictions.json must contain a list of image records")
-        names = set()
-        for row in records:
-            if not isinstance(row, dict): raise ValueError("Prediction records must be objects")
-            name = _text(row.get("image"), "image")
-            if Path(name).is_absolute() or ".." in Path(name).parts or name in names:
-                raise ValueError("Prediction image paths must be unique relative paths without ..")
-            names.add(name)
-            if not isinstance(row.get("truth"), list) or not isinstance(row.get("predictions"), list):
-                raise ValueError("Prediction records need truth and predictions lists")
-            if any(type(row.get(key)) is not int or row[key] < 0 for key in ("fp", "fn")):
-                raise ValueError("Prediction records need nonnegative integer fp and fn")
-        return exp, records
+        return exp, load_predictions(exp)
 
     def _example(self, exp, index, row):
         return {**row, "evidence": self._ref("artifact", f"{exp.id}:predictions.json#{index}", row["image"])}
@@ -128,7 +118,12 @@ class AnalysisTools:
         _limit(limit, 8)
         if kind not in ("fp", "fn", "any"): raise ValueError("kind must be fp, fn or any")
         exp, records = self._records(experiment_id)
-        score = lambda row: row["fp"] + row["fn"] if kind == "any" else row[kind]
+        def score(row):
+            if records.class_aware:
+                truth, preds, _ = match_boxes(row, exp.config.get("iou_match", 0.5))
+                counts = {"fp": len(row["predictions"]) - len(preds), "fn": len(row["truth"]) - len(truth)}
+                return counts["fp"] + counts["fn"] if kind == "any" else counts[kind]
+            return row["fp"] + row["fn"] if kind == "any" else row[kind]
         ranked = sorted(enumerate(records), key=lambda item: -score(item[1]))
         selected = [(i, row) for i, row in ranked if score(row) > 0][:limit]
         return {"experiment_id": exp.id, "kind": kind,
@@ -165,8 +160,12 @@ class AnalysisTools:
 
     def execute(self, name, arguments):
         if not isinstance(arguments, dict): raise ValueError("Tool arguments must be a JSON object")
-        definition = next((tool["function"] for tool in TOOLS if tool["function"]["name"] == name), None)
+        definition = next((tool["function"] for tool in self.definitions if tool["function"]["name"] == name), None)
         if definition is None: raise ValueError("Unknown analysis tool")
         if set(arguments) != set(definition["parameters"]["required"]): raise ValueError(f"Invalid arguments for {name}")
         result = getattr(self, name)(**arguments)
+        data = result.data if isinstance(result, ToolResult) else result
+        if name == "search_memory": self.require_citations |= any(data.values())
+        elif name == "list_experiments": self.require_citations |= bool(data["experiments"])
+        else: self.require_citations = True
         return result if isinstance(result, ToolResult) else ToolResult(result)

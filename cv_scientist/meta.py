@@ -44,7 +44,7 @@ class MetaConfig:
 
     def __post_init__(self):
         if not isinstance(self.api_key, str) or not self.api_key.strip():
-            raise ValueError("Set MODEL_API_KEY in the environment or .env to use Meta")
+            raise ValueError("Set CV_SCIENTIST_API_KEY or run: cv-scientist config")
         if not isinstance(self.model, str) or not self.model.strip(): raise ValueError("Meta model must not be empty")
         parsed = urlsplit(self.base_url)
         local_http = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
@@ -60,7 +60,9 @@ class MetaConfig:
         values = read_env(Path.cwd() / ".env")
         values.update(read_env(Path(workspace.root) / ".env"))
         values.update(os.environ)
-        return cls(api_key=values.get("MODEL_API_KEY", ""),
+        from .credentials import load_global_api_key
+        api_key = values["CV_SCIENTIST_API_KEY"] if "CV_SCIENTIST_API_KEY" in values else load_global_api_key()
+        return cls(api_key=api_key,
                    model=model if model is not None else values.get("META_MODEL") or workspace.config.get("agent_model", "muse-wonder-1.0"),
                    base_url=values.get("META_API_BASE_URL", "https://api.meta.ai/v1"))
 
@@ -91,7 +93,7 @@ class MetaClient:
         except HTTPError as error:
             status = error.code
             error.close()
-            hint = {401: "check MODEL_API_KEY", 403: "check model/account access", 429: "rate limit reached; retry later"}.get(status, "request failed")
+            hint = {401: "check CV_SCIENTIST_API_KEY or run cv-scientist config", 403: "check model/account access", 429: "rate limit reached; retry later"}.get(status, "request failed")
             raise MetaAPIError(f"Meta API HTTP {status}: {hint}") from None
         except (URLError, TimeoutError, socket.timeout):
             raise MetaAPIError("Meta API connection failed or timed out") from None

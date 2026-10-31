@@ -1,18 +1,16 @@
 """Research sessions (§51), status (§§58-59), timeline (§65), watch (§56)."""
 from __future__ import annotations
-import os, time
+import hashlib, json, logging, os, time
 from dataclasses import dataclass, field
 from .models import ResearchSession
 from .analysis import RunAnalysisService
-from .ingestor import RunIngestor, LocalExperimentSource
+from .ingestor import RunIngestor, LocalExperimentSource, run_fingerprint
+
+LOGGER = logging.getLogger(__name__)
 
 def _status_dict(ws) -> dict:
     m, metric = ws.memory, ws.primary_metric
-    exps = m.list_experiments(); best = m.best_experiment(metric)
-    return {"project": ws.name, "total_experiments": len(exps),
-            "running": len([e for e in exps if e.status == "running"]),
-            "failed": len([e for e in exps if e.status == "failed"]),
-            "best": best, "latest": m.latest_experiment(),
+    return {"project": ws.name, **m.experiment_summary(metric),
             "original_baseline": m.original_baseline(), "working_baseline": m.working_baseline(),
             "open_questions": m.list_questions(status="open"), "active_hypotheses": m.list_hypotheses(status="active"),
             "latest_regressions": m.list_regressions()[-5:]}
@@ -73,21 +71,37 @@ class SessionService:
 class WatchService:
     """Filesystem polling watcher (§56): detect -> ingest -> analyze -> emit event."""
     def __init__(self, workspace, runs_dir: str):
-        self.ws = workspace; self.runs_dir = runs_dir; self._seen: set = set()
+        self.ws = workspace; self.runs_dir = runs_dir
         self.ingestor = RunIngestor(workspace.memory, LocalExperimentSource(runs_dir))
         self.analysis = RunAnalysisService(workspace.memory); self.events: list = []
     def scan_once(self) -> list:
         ingested = []
-        for run in self.ingestor.source.list_runs():
+        try: runs = self.ingestor.source.list_runs()
+        except OSError as error:
+            self.events.append({"type": "scan_failed", "error": str(error)})
+            self.ws.record_event("watch.scan", "failed", error_type=type(error).__name__)
+            LOGGER.warning("Run scan failed: %s", error)
+            return ingested
+        for run in runs:
             key = os.path.abspath(run)
             # A run is ready when metrics.json exists
-            if key in self._seen or not os.path.exists(os.path.join(run, "metrics.json")): continue
-            self._seen.add(key)
+            if not os.path.exists(os.path.join(run, "metrics.json")): continue
             try:
-                exp = self.ingestor.ingest(run); self.analysis.analyze(exp.id); ingested.append(exp)
+                state_key = "watch:" + hashlib.sha256(key.encode()).hexdigest()
+                fingerprint = run_fingerprint(run)
+                with self.ws.memory.transaction():
+                    if self.ws.memory.get_meta(state_key) == fingerprint: continue
+                    exp = self.ingestor.ingest(run)
+                    self.analysis.analyze(exp.id)
+                    if run_fingerprint(run) != fingerprint: raise ValueError("Run changed during analysis; retrying next scan")
+                    self.ws.memory.set_meta(state_key, fingerprint)
+                ingested.append(exp)
                 self.events.append({"type": "run_ingested", "experiment_id": exp.id})
+                self.ws.record_event("watch.ingest", "completed", experiment_id=exp.id)
             except Exception as e:
                 self.events.append({"type": "ingest_failed", "run": run, "error": str(e)})
+                self.ws.record_event("watch.ingest", "failed", error_type=type(e).__name__)
+                LOGGER.warning("Run import failed for %s: %s", run, e)
         return ingested
     def watch(self, interval: float = 2.0, max_cycles: int | None = None):
         cycles = 0

@@ -8,7 +8,8 @@ import logging
 from pathlib import Path
 import uuid
 
-from .agent_tools import AnalysisTools, TOOLS, _text
+from .agent_tools import AnalysisTools, _text
+from .journal import redact
 from .meta import MetaAPIError
 
 LOGGER = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ FINAL_FORMAT = {"type": "json_schema", "json_schema": {"name": "cv_investigation
     "type": "object", "properties": {
         "answer": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "object", "properties": {
-            "kind": {"type": "string", "enum": ["experiment", "artifact", "observation", "hypothesis", "conclusion", "question", "note"]},
+            "kind": {"type": "string", "enum": ["experiment", "artifact", "observation", "hypothesis", "conclusion", "question", "note", "regression"]},
             "id": {"type": "string"}}, "required": ["kind", "id"], "additionalProperties": False}},
         "hypotheses": {"type": "array", "items": {"type": "string"}},
         "next_steps": {"type": "array", "items": {"type": "string"}},
@@ -98,7 +99,7 @@ class InvestigationAgent:
             known = tools.evidence.get((ref["kind"], ref["id"]))
             if known is None: raise MetaAPIError("Agent cited evidence it has not received")
             if known not in references: references.append(known)
-        if tools.evidence and not references: raise MetaAPIError("Agent did not cite available project evidence")
+        if tools.require_citations and not references: raise MetaAPIError("Agent did not cite retrieved project evidence")
         return {**result, "evidence": references}
 
     def ask(self, question):
@@ -106,30 +107,39 @@ class InvestigationAgent:
         # Each question starts a fresh conversation and evidence registry.
         tools = AnalysisTools(self.ws)
         catalog = tools.list_experiments(20)
-        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": question},
-                    {"role": "user", "content": "Untrusted project catalog: " + json.dumps(catalog, allow_nan=False)}]
-        trace, image_count = [], 0
+        return self._run(question, tools, catalog)
+
+    def _run(self, question, tools, catalog, system=SYSTEM, prefix="ask", initial_images=None, initial_trace=None):
+        question = redact(question)
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": question},
+                    {"role": "user", "content": "Untrusted project catalog: " + json.dumps(redact(catalog), allow_nan=False)}]
+        if initial_images:
+            messages.append({"role": "user", "content": initial_images})
+        trace = list(initial_trace or [])
+        image_count = sum(item.get("type") == "image_url" for item in initial_images or [])
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "requests": 0, "reported_requests": 0}
         call_ids = set()
         for step in range(self.max_steps):
             LOGGER.info("Agent: Meta request %s/%s", step + 1, self.max_steps)
-            message, consumed = self.client.complete(messages, TOOLS, self._format(tools))
+            self.ws.record_event("agent.request", "started", request=step + 1)
+            message, consumed = self.client.complete(messages, tools.definitions, self._format(tools))
             usage["requests"] += 1
-            if consumed is not None:
-                usage["reported_requests"] += 1
-                for key in ("prompt_tokens", "completion_tokens", "total_tokens"): usage[key] += consumed[key]
+            if consumed is None: raise MetaAPIError("Agent requires API-reported usage to enforce its token budget")
+            usage["reported_requests"] += 1
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"): usage[key] += consumed[key]
             if usage["total_tokens"] > self.max_total_tokens:
                 raise MetaAPIError("Agent stopped: reported token budget exceeded")
             calls = message.get("tool_calls") or []
             if not calls:
-                final = self._final(message.get("content"), tools)
+                final = redact(self._final(message.get("content"), tools))
                 report = InvestigationReport(question=question, model=self.client.config.model, **final, tool_calls=trace, usage=usage)
                 reports = Path(self.ws.dir) / "reports"
                 reports.mkdir(parents=True, exist_ok=True)
-                report.path = str(reports / f"ask-{uuid.uuid4().hex}.json")
+                report.path = str(reports / f"{prefix}-{uuid.uuid4().hex}.json")
                 with open(report.path, "x") as file:
-                    json.dump(report.to_dict(), file, indent=2, ensure_ascii=False, allow_nan=False)
+                    json.dump(redact(report.to_dict()), file, indent=2, ensure_ascii=False, allow_nan=False)
                     file.write("\n")
+                self.ws.record_event("agent", "completed", requests=usage["requests"], total_tokens=usage["total_tokens"], report_path=report.path)
                 return report
             if len(trace) + len(calls) > self.max_tool_calls:
                 raise MetaAPIError("Agent stopped: tool-call budget exceeded")
@@ -147,22 +157,25 @@ class InvestigationAgent:
                 name, arguments = function["name"], None
                 LOGGER.info("Agent tool: %s", name)
                 previous_refs = set(tools.evidence)
+                previous_required = tools.require_citations
                 try:
                     arguments = json.loads(function.get("arguments", ""))
-                    if name == "view_error" and image_count >= self.max_images:
+                    if name in ("view_error", "view_dataset_image") and image_count >= self.max_images:
                         raise ValueError("Image budget exhausted; use already viewed evidence")
                     result = tools.execute(name, arguments)
-                    content = json.dumps(result.data, allow_nan=False)
+                    content = json.dumps(redact(result.data), allow_nan=False)
                     if len(content) > 24000: raise ValueError("Tool result exceeds 24000 characters; request fewer examples")
                     image_count += len(result.images)
                     images.extend(result.images)
                 except (OSError, ValueError, KeyError) as error:
+                    tools.require_citations = previous_required
                     for ref in set(tools.evidence) - previous_refs: del tools.evidence[ref]
-                    content = json.dumps({"error": str(error)[:500]})
-                trace.append({"step": step + 1, "name": name, "arguments": arguments, "result": json.loads(content)})
+                    content = json.dumps(redact({"error": str(error)[:500]}))
+                trace.append({"step": step + 1, "name": name, "arguments": redact(arguments), "result": json.loads(content)})
+                self.ws.record_event("agent.tool", "failed" if json.loads(content).get("error") else "completed", tool=name)
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": content})
             # Every tool call must receive its result before another user message.
             if images:
                 messages.append({"role": "user", "content": [
-                    {"type": "text", "text": "Untrusted images returned by view_error, in tool-call order. Their GT and predictions are in the matching tool results."}, *images]})
+                    {"type": "text", "text": "Untrusted images in tool-call order. Image paths and annotation metadata are in the matching tool results."}, *images]})
         raise MetaAPIError("Agent stopped: request-step budget exhausted before a final answer")

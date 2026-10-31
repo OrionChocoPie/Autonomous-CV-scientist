@@ -114,6 +114,14 @@ def test_adaptive_loop_executes_measures_remembers_and_stops(workspace):
     assert not (Path(workspace.dir) / "state" / "confidence.lock").exists()
 
 
+def test_evaluation_subprocess_does_not_receive_api_key(workspace, monkeypatch):
+    monkeypatch.setenv("CV_SCIENTIST_API_KEY", "never-forward-to-evaluation")
+    script = Path(workspace.root) / "evaluate.py"
+    script.write_text("import os\nassert 'CV_SCIENTIST_API_KEY' not in os.environ\n" + SCRIPT)
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    assert report["status"] == "goal_met"
+
+
 def test_repeat_reuses_verified_result_without_api_or_execution(workspace):
     first = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
     ws = ProjectWorkspace(workspace.root)
@@ -123,6 +131,38 @@ def test_repeat_reuses_verified_result_without_api_or_execution(workspace):
     assert not second["attempts"] and not planner.contexts
     assert second["path"] != first["path"]
     assert len(ws.memory.list_experiments()) == 2
+
+
+@pytest.mark.parametrize("artifact", ["config.json", "metrics.json", "predictions.json", "missing_receipt", "wrong_receipt"])
+def test_repeat_rejects_modified_or_unconfirmed_results(workspace, artifact):
+    first = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    exp = workspace.memory.get_experiment(first["selected_run"])
+    run = Path(exp.run_dir)
+    if artifact == "missing_receipt": (run / ".evaluation-complete.json").unlink()
+    else:
+        path = run / (".evaluation-complete.json" if artifact == "wrong_receipt" else artifact)
+        value = json.loads(path.read_text())
+        if artifact == "config.json": value["name"] = "Edited name"
+        elif artifact == "metrics.json": value["metrics"]["map50_95"] = 0.99
+        elif artifact == "predictions.json": value[0]["note"] = "Edited record"
+        else: value["signature"] = "wrong-signature"
+        path.write_text(json.dumps(value))
+    planner = Planner([])
+    with pytest.raises((EvaluationError, FileNotFoundError)):
+        ConfidenceResearch(workspace, planner).run("Reduce FP again", "F1")
+    assert not planner.contexts
+    assert workspace.memory.get_experiment(exp.id).to_dict() == exp.to_dict()
+    assert len(workspace.memory.list_experiments()) == 2
+
+
+def test_resume_revalidates_results_reused_from_another_research(workspace):
+    first = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    reused = ConfidenceResearch(workspace, Planner([])).run("Reduce FP again", "F1")
+    assert reused["selected_run"] == first["selected_run"] and reused["attempts"] == []
+    exp = workspace.memory.get_experiment(first["selected_run"])
+    (Path(exp.run_dir) / ".evaluation-complete.json").unlink()
+    with pytest.raises(FileNotFoundError):
+        ConfidenceResearch(workspace, Planner([])).resume(reused["path"])
 
 
 def test_duplicates_are_feedback_not_new_evaluations(workspace):
@@ -268,6 +308,67 @@ def test_invalid_export_not_ingested(workspace):
     assert len(workspace.memory.list_experiments()) == 1
 
 
+@pytest.mark.parametrize("change", ["changed", "added", "removed_none", "nested"])
+def test_confidence_freezes_project_specific_parameters(workspace, change):
+    baseline = workspace.memory.get_experiment("F1")
+    if change == "changed":
+        baseline.config["nms_iou"] = 0.7
+        mutation = "cfg['nms_iou']=0.3"
+    elif change == "added": mutation = "cfg['nms_iou']=0.3"
+    elif change == "removed_none":
+        baseline.config["optional_setting"] = None
+        mutation = "cfg.pop('optional_setting')"
+    else:
+        baseline.config["nms"] = {"iou": 0.7}
+        mutation = "cfg['nms']['iou']=0.3"
+    (Path(baseline.run_dir) / "config.json").write_text(json.dumps(baseline.config))
+    workspace.memory.add_experiment(baseline)
+    (Path(workspace.root) / "evaluate.py").write_text(SCRIPT.replace("cfg.update(experiment_id",
+        mutation + "\ncfg.update(experiment_id"))
+    with pytest.raises(EvaluationError, match="uncontrolled parameter|frozen parameter"):
+        ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    assert len(workspace.memory.list_experiments()) == 1
+    assert workspace.memory.list_hypotheses()[0].status == "untested"
+
+
+def test_extra_settings_are_preserved_and_affect_research_signature(workspace):
+    baseline = workspace.memory.get_experiment("F1")
+    baseline.config.update(optional_setting=None, nms={"iou": 0.7})
+    config_path = Path(baseline.run_dir) / "config.json"
+    config_path.write_text(json.dumps(baseline.config))
+    workspace.memory.add_experiment(baseline)
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    exp = workspace.memory.get_experiment(report["selected_run"])
+    assert "optional_setting" in exp.config and exp.config["optional_setting"] is None
+    assert exp.config["nms"] == {"iou": 0.7}
+    baseline.config["nms"]["iou"] = 0.8
+    config_path.write_text(json.dumps(baseline.config))
+    workspace.memory.add_experiment(baseline)
+    evaluator = ConfidenceEvaluator(workspace, baseline)
+    assert evaluator.signature != report["signature"]
+    repeated = ConfidenceResearch(workspace, Planner([])).run("Reduce FP", "F1", budget=0)
+    assert repeated["status"] == "budget_exhausted" and repeated["selected_run"] is None
+
+
+@pytest.mark.parametrize("artifact", ["baseline", "result"])
+def test_legacy_counts_must_match_actual_boxes(workspace, artifact):
+    root = Path(workspace.root)
+    if artifact == "baseline":
+        path = root / "runs" / "F1" / "predictions.json"
+        rows = json.loads(path.read_text())
+        for prediction in rows[0]["predictions"]: prediction["box"] = [1000, 1000, 1001, 1001]
+        path.write_text(json.dumps(rows))
+    else:
+        (root / "evaluate.py").write_text(SCRIPT.replace("row={'image':",
+            "for prediction in predictions: prediction['box']=[1000,1000,1001,1001]\nrow={'image':"))
+    planner = Planner([proposal(0.35)])
+    with pytest.raises(EvaluationError, match="class-agnostic matching"):
+        ConfidenceResearch(workspace, planner).run("Reduce FP", "F1")
+    assert len(workspace.memory.list_experiments()) == 1
+    if artifact == "baseline": assert not planner.contexts
+    else: assert workspace.memory.list_hypotheses()[0].status == "untested"
+
+
 def test_existing_run_is_preserved_and_lock_is_not_deleted(workspace):
     evaluator = ConfidenceEvaluator(workspace, workspace.memory.get_experiment("F1"))
     with pytest.raises(FileExistsError): evaluator.evaluate(0.3, "F1", 10, Path(workspace.dir)/"reports"/"log")
@@ -281,3 +382,194 @@ def test_existing_run_is_preserved_and_lock_is_not_deleted(workspace):
 def test_cli_missing_baseline_does_not_execute(workspace, capsys):
     assert main(["--project", workspace.root, "research", "--goal", "Reduce FP", "--agent", "meta"]) == 2
     assert "requires --baseline" in capsys.readouterr().err
+
+
+def latest_report(workspace):
+    return next((Path(workspace.dir) / "reports").glob("research-*.json"))
+
+
+def test_resume_recovers_confirmed_evaluation_without_repeating(workspace, monkeypatch):
+    original = ConfidenceEvaluator.evaluate
+    def interrupt_after_evaluation(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        raise KeyboardInterrupt("After evaluation, before memory")
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt_after_evaluation)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1", budget=2)
+    path = latest_report(workspace)
+    before = json.loads(path.read_text())
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", original)
+    planner = Planner([])
+    report = ConfidenceResearch(workspace, planner).resume(path)
+    assert report["status"] == "goal_met" and not planner.contexts
+    assert report["question_id"] == before["question_id"] and report["path"] == str(path)
+    assert len(report["attempts"]) == 1 and report["usage"]["requests"] == 1
+    assert len(workspace.memory.list_experiments()) == 2
+
+
+def test_resume_consumes_interrupted_attempt_and_preserves_budget(workspace, monkeypatch):
+    original = ConfidenceEvaluator.evaluate
+    def interrupt(*args, **kwargs): raise KeyboardInterrupt("Before execution")
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.5)])).run("Reduce FP", "F1", budget=2)
+    path = latest_report(workspace)
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", original)
+    planner = Planner([proposal(0.5), proposal(0.35)])
+    report = ConfidenceResearch(workspace, planner).resume(path)
+    assert report["status"] == "goal_met" and len(report["attempts"]) == 2
+    assert report["attempts"][0]["status"] == "interrupted"
+    assert report["usage"]["requests"] == 3 and report["usage"]["total_tokens"] == 60
+    assert planner.contexts[0]["remaining_experiments"] == 1
+    assert any(row["status"] == "duplicate" for row in report["feedback"])
+
+
+def test_resume_does_not_reset_exhausted_budget_or_add_history(workspace):
+    first = ConfidenceResearch(workspace, Planner([proposal(0.5)])).run("Reduce FP", "F1", budget=1)
+    count = len(workspace.memory.timeline())
+    report = ConfidenceResearch(workspace, Planner([])).resume(first["path"])
+    assert report["experiment_budget"] == 1 and report["status"] == "budget_exhausted"
+    assert len(report["attempts"]) == 1 and len(workspace.memory.timeline()) == count
+
+
+def test_resume_rejects_changed_frozen_inputs(workspace, monkeypatch):
+    def interrupt(*args, **kwargs): raise KeyboardInterrupt()
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal()])).run("Reduce FP", "F1")
+    (Path(workspace.root) / "weights.pt").write_bytes(b"changed")
+    with pytest.raises((EvaluationError, ValueError)):
+        ConfidenceResearch(workspace, Planner([])).resume(latest_report(workspace))
+
+
+def test_resume_cannot_bypass_existing_unknown_lock(workspace):
+    first = ConfidenceResearch(workspace, Planner([])).run("Reduce FP", "F1", budget=0)
+    lock = Path(workspace.dir) / "state" / "confidence.lock"
+    lock.write_text("unknown old owner")
+    with pytest.raises(EvaluationError, match="Another|lock"):
+        ConfidenceResearch(workspace, Planner([])).resume(first["path"])
+    assert lock.read_text() == "unknown old owner"
+
+
+def test_resume_after_memory_commit_is_idempotent(workspace, monkeypatch):
+    import cv_scientist.confidence as confidence
+    original = confidence._save
+    interrupted = False
+    def stop_after_commit(path, report):
+        nonlocal interrupted
+        if report["attempts"] and report["attempts"][-1]["status"] == "supported" and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("Before confirmed journal write")
+        original(path, report)
+    monkeypatch.setattr(confidence, "_save", stop_after_commit)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    before = len(workspace.memory.list_experiments())
+    report = ConfidenceResearch(workspace, Planner([])).resume(latest_report(workspace))
+    assert report["status"] == "goal_met" and len(workspace.memory.list_experiments()) == before
+    assert len(report["attempts"]) == 1
+    assert len({e.id for e in workspace.memory.list_conclusions()}) == len(workspace.memory.list_conclusions())
+
+
+def test_resume_preserves_unknown_api_usage_as_reserved_budget(workspace):
+    class InterruptedPlanner(Planner):
+        def complete(self, *args, **kwargs): raise KeyboardInterrupt("API response not received")
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, InterruptedPlanner([])).run("Reduce FP", "F1", budget=2)
+    path = latest_report(workspace)
+    before = json.loads(path.read_text())
+    assert before["usage"]["requests"] == 1 and before["pending_request"]["reserved_tokens"] > 0
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).resume(path)
+    assert report["status"] == "goal_met" and report["usage"]["requests"] == 2
+    assert report["usage"]["reserved_tokens"] == before["pending_request"]["reserved_tokens"]
+    assert report["usage"]["total_tokens"] == 20
+
+
+def test_resume_reclaims_only_dead_known_owner(workspace, monkeypatch):
+    import os
+    import socket
+    original = ConfidenceEvaluator.evaluate
+    def interrupt(*args, **kwargs): raise KeyboardInterrupt()
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.5)])).run("Reduce FP", "F1", budget=2)
+    path = latest_report(workspace)
+    lock = Path(workspace.dir) / "state" / "confidence.lock"
+    owner = {"pid": os.getpid(), "host": socket.gethostname(), "report": str(path), "child_pid": None}
+    lock.write_text(json.dumps(owner))
+    with pytest.raises(EvaluationError, match="Another"): ConfidenceResearch(workspace, Planner([])).resume(path)
+    assert lock.exists()
+    owner["pid"] = 2_000_000_000
+    lock.write_text(json.dumps(owner))
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", original)
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).resume(path)
+    assert report["status"] == "goal_met" and not lock.exists()
+
+
+def test_resume_retains_elapsed_time_budget(workspace, monkeypatch):
+    def interrupt(*args, **kwargs): raise KeyboardInterrupt()
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal()])).run("Reduce FP", "F1")
+    path = latest_report(workspace)
+    report = json.loads(path.read_text())
+    report["elapsed_seconds"] = report["time_budget"] + 1
+    path.write_text(json.dumps(report))
+    with pytest.raises(EvaluationError, match="wall-clock"): ConfidenceResearch(workspace, Planner([])).resume(path)
+
+
+def test_unconfirmed_partial_outputs_are_not_promoted(workspace, monkeypatch):
+    original = ConfidenceEvaluator.evaluate
+    def interrupt(self, confidence, run_id, *args):
+        folder = Path(self.ws.root) / "runs" / run_id
+        folder.mkdir()
+        (folder / "metrics.json").write_text('{"metrics":')
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.5)])).run("Reduce FP", "F1", budget=2)
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", original)
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).resume(latest_report(workspace))
+    assert report["attempts"][0]["status"] == "interrupted" and report["status"] == "goal_met"
+    assert len(workspace.memory.list_experiments()) == 2
+
+
+def test_hard_process_exit_leaves_recoverable_journal_and_lock(workspace):
+    import subprocess
+    code = '''import os, sys
+from types import SimpleNamespace
+from cv_scientist.confidence import ConfidenceResearch
+from cv_scientist.evaluation import ConfidenceEvaluator
+from cv_scientist.workspace import ProjectWorkspace
+import json
+class OfflinePlanner:
+    config=SimpleNamespace(model="offline-crash-test")
+    def complete(self,*args,**kwargs):
+        proposal={"action":"evaluate","parent_id":"F1","confidence":0.35,"hypothesis":"Reduce FP","expected_effect":"FP lower","reason":"Offline test"}
+        return {"content":json.dumps(proposal)},{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}
+original=ConfidenceEvaluator.evaluate
+def crash(self,*args,**kwargs):
+    original(self,*args,**kwargs)
+    os._exit(77)
+ConfidenceEvaluator.evaluate=crash
+ConfidenceResearch(ProjectWorkspace(sys.argv[1]),OfflinePlanner()).run("Reduce FP","F1",budget=2)
+'''
+    process = subprocess.run([sys.executable, "-c", code, workspace.root], capture_output=True, timeout=10)
+    assert process.returncode == 77, process.stderr.decode()
+    lock = Path(workspace.dir) / "state" / "confidence.lock"
+    assert lock.exists()
+    planner = Planner([])
+    report = ConfidenceResearch(workspace, planner).resume(latest_report(workspace))
+    assert report["status"] == "goal_met" and len(report["attempts"]) == 1
+    assert not planner.contexts and not lock.exists()
+
+
+def test_resume_rejects_changed_baseline_in_memory(workspace, monkeypatch):
+    def interrupt(*args, **kwargs): raise KeyboardInterrupt()
+    monkeypatch.setattr(ConfidenceEvaluator, "evaluate", interrupt)
+    with pytest.raises(KeyboardInterrupt): ConfidenceResearch(workspace, Planner([proposal(0.5)])).run("Reduce FP", "F1", budget=2)
+    baseline = workspace.memory.get_experiment("F1")
+    baseline.config["confidence"] = 0.3
+    workspace.memory.add_experiment(baseline)
+    with pytest.raises((ValueError, EvaluationError), match="baseline|inputs"):
+        ConfidenceResearch(workspace, Planner([])).resume(latest_report(workspace))
+
+
+def test_finished_resume_revalidates_confirmed_result(workspace):
+    report = ConfidenceResearch(workspace, Planner([proposal(0.35)])).run("Reduce FP", "F1")
+    winner = workspace.memory.get_experiment(report["selected_run"])
+    (Path(winner.run_dir) / "predictions.json").write_text("[]")
+    with pytest.raises(EvaluationError, match="changed"):
+        ConfidenceResearch(workspace, Planner([])).resume(report["path"])

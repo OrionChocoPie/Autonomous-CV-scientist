@@ -151,6 +151,7 @@ class Diagnosis:
     findings: list = field(default_factory=list)  # DiagnosticFinding
     created_at: float = field(default_factory=now)
     id: str = field(default_factory=lambda: _id("DG"))
+    classification: dict = field(default_factory=dict)
     def to_dict(self):
         d = asdict(self); return d
     @staticmethod

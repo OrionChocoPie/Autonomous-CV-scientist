@@ -7,3 +7,25 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local runs, private data, generated reports and developer notes.
+/demo-workspace/
+/data/
+/datasets/
+/runs/
+/modal-runs/
+/reports/
+/NIGHT_WORK.md
+/dist/
+/build/
+.DS_Store
+*.py[cod]
+*.pt
+*.pth
+*.onnx
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.log

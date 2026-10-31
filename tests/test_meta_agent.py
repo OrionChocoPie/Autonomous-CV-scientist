@@ -183,17 +183,34 @@ def test_env_precedence_and_no_environment_mutation(workspace, tmp_path, monkeyp
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
-    (cwd / ".env").write_text("MODEL_API_KEY=cwd-key\nMETA_MODEL=muse-spark-1.3\n")
+    (cwd / ".env").write_text("CV_SCIENTIST_API_KEY=cwd-key\nMETA_MODEL=muse-spark-1.3\n")
     target = Path(workspace.root) / ".env"
-    target.write_text("export MODEL_API_KEY='target-key' # comment\n")
-    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    target.write_text("export CV_SCIENTIST_API_KEY='target-key' # comment\n")
+    monkeypatch.delenv("CV_SCIENTIST_API_KEY", raising=False)
     monkeypatch.delenv("META_MODEL", raising=False)
     config = MetaConfig.from_workspace(workspace)
     assert config.api_key == "target-key" and config.model == "muse-spark-1.3"
     assert "target-key" not in repr(config)
-    monkeypatch.setenv("MODEL_API_KEY", "process-key")
+    monkeypatch.setenv("CV_SCIENTIST_API_KEY", "process-key")
     assert MetaConfig.from_workspace(workspace, model="muse-wonder-1.0").api_key == "process-key"
-    assert target.read_text() == "export MODEL_API_KEY='target-key' # comment\n"
+    assert target.read_text() == "export CV_SCIENTIST_API_KEY='target-key' # comment\n"
+
+
+def test_global_credentials_authenticate_http_from_multiple_projects(workspace, tmp_path, monkeypatch):
+    from cv_scientist.credentials import save_global_api_key
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "user-config"))
+    monkeypatch.delenv("CV_SCIENTIST_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    save_global_api_key("global-http-test-key")
+    other = ProjectWorkspace.init(str(tmp_path / "other-project"))
+    with server([(200, api_response(final()), {})] * 2) as (url, requests):
+        monkeypatch.setenv("META_API_BASE_URL", url)
+        for ws in (workspace, other):
+            config = MetaConfig.from_workspace(ws)
+            MetaClient(config).complete([], [], {})
+            assert "global-http-test-key" not in repr(config)
+    assert len(requests) == 2
+    assert all(request["authorization"] == "Bearer global-http-test-key" for request in requests)
 
 
 @pytest.mark.parametrize("entry", ["not-an-assignment", "KEY='unterminated", "KEY=unquoted spaces"])
@@ -207,7 +224,7 @@ def test_invalid_env_does_not_echo_contents(tmp_path, entry):
 
 @pytest.mark.parametrize("key", ["", None, "   "])
 def test_missing_key_is_an_error(key):
-    with pytest.raises(ValueError, match="MODEL_API_KEY"): MetaConfig(key)
+    with pytest.raises(ValueError, match="CV_SCIENTIST_API_KEY"): MetaConfig(key)
 
 
 @pytest.mark.parametrize("kwargs", [{"base_url": "http://remote.example/v1"}, {"base_url": "https://user:pass@host/v1"},
@@ -344,11 +361,11 @@ def test_repeated_questions_use_fresh_history_and_unique_reports(workspace):
 
 
 def test_cli_meta_uses_target_env_and_offline_override(workspace, monkeypatch, capsys):
-    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("CV_SCIENTIST_API_KEY", raising=False)
     monkeypatch.delenv("META_API_BASE_URL", raising=False)
     with open(workspace.config_path, "a") as file: file.write("agent_provider: meta\n")
     with server([(200, api_response(final()), {})]) as (url, requests):
-        (Path(workspace.root) / ".env").write_text(f"MODEL_API_KEY=test-key\nMETA_API_BASE_URL={url}\n")
+        (Path(workspace.root) / ".env").write_text(f"CV_SCIENTIST_API_KEY=test-key\nMETA_API_BASE_URL={url}\n")
         assert main(["--project", workspace.root, "ask", "Why?"]) == 0
     output = capsys.readouterr()
     assert "Report:" in output.out and "test-key" not in output.out + output.err
@@ -357,11 +374,66 @@ def test_cli_meta_uses_target_env_and_offline_override(workspace, monkeypatch, c
 
 
 def test_cli_provider_failure_returns_nonzero(workspace, monkeypatch, capsys):
-    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("CV_SCIENTIST_API_KEY", raising=False)
     monkeypatch.delenv("META_API_BASE_URL", raising=False)
     with server([(401, b"provider-secret", {})]) as (url, requests):
-        (Path(workspace.root) / ".env").write_text(f"MODEL_API_KEY=test-key\nMETA_API_BASE_URL={url}\n")
+        (Path(workspace.root) / ".env").write_text(f"CV_SCIENTIST_API_KEY=test-key\nMETA_API_BASE_URL={url}\n")
         assert main(["--project", workspace.root, "ask", "Why?", "--agent", "meta"]) == 2
     output = capsys.readouterr()
     assert "HTTP 401" in output.err and not output.out
     assert "provider-secret" not in output.err
+
+
+def test_irrelevant_catalog_does_not_force_fabricated_relevance(workspace):
+    client = ScriptedClient([
+        assistant(tool_call("search", "search_memory", query="unicorns astronomy zebras")),
+        {"role": "assistant", "content": json.dumps({"answer": "No relevant project evidence is available.",
+            "evidence": [], "hypotheses": [], "next_steps": []})},
+    ])
+    report = InvestigationAgent(workspace, client).ask("What do unicorns prove?")
+    assert report.evidence == [] and all(not values for values in report.tool_calls[0]["result"].values())
+
+
+def test_investigation_without_reported_usage_cannot_bypass_token_limit(workspace):
+    class MissingUsage(ScriptedClient):
+        def complete(self, *args, **kwargs):
+            message, _ = super().complete(*args, **kwargs)
+            return message, None
+    with pytest.raises(MetaAPIError, match="usage"):
+        InvestigationAgent(workspace, MissingUsage([final()])).ask("Explain E1")
+
+
+@pytest.mark.parametrize("name,arguments", [("get_experiment", {"experiment_id": "E1"}),
+                                           ("search_memory", {"query": "E1"})])
+def test_config_secrets_are_redacted_before_provider_requests_and_reports(workspace, name, arguments):
+    exp = workspace.memory.get_experiment("E1")
+    secrets = ["fixture-api-value", "fixture-password-value", "fixture-token-value"]
+    exp.config.update(api_key=secrets[0], service={"password": secrets[1]}, accounts=[{"token": secrets[2]}])
+    workspace.memory.add_experiment(exp)
+    client = ScriptedClient([assistant(tool_call("read", name, **arguments)), final()])
+    report = InvestigationAgent(workspace, client).ask("Explain E1")
+    result = json.loads(next(m["content"] for m in client.requests[1] if m["role"] == "tool"))
+    config = result["config"] if name == "get_experiment" else result["experiments"][0]["config"]
+    assert config["api_key"] == "[redacted]"
+    assert config["service"]["password"] == "[redacted]"
+    assert config["accounts"][0]["token"] == "[redacted]"
+    assert config["imgsz"] == exp.config["imgsz"]
+    for value in secrets:
+        assert value not in json.dumps(client.requests)
+        assert value not in json.dumps(report.to_dict())
+        assert value not in Path(report.path).read_text()
+    assert workspace.memory.get_experiment("E1").config == exp.config
+
+
+def test_question_and_final_report_redact_sensitive_environment_values(workspace, monkeypatch):
+    secret = "fixture-environment-key"
+    monkeypatch.setenv("CV_SCIENTIST_API_KEY", secret)
+    reply = final()
+    value = json.loads(reply["content"])
+    value["answer"] = "Provider echoed " + secret
+    reply["content"] = json.dumps(value)
+    client = ScriptedClient([reply])
+    report = InvestigationAgent(workspace, client).ask("Explain E1 " + secret)
+    assert secret not in json.dumps(client.requests)
+    assert secret not in json.dumps(report.to_dict())
+    assert secret not in Path(report.path).read_text()

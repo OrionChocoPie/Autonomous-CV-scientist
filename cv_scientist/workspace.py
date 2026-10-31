@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from .memory import ResearchMemory
 
-SUBDIRS = ["state", "memory", "runs", "observations", "experiments", "reports"]
+SUBDIRS = ["state", "memory", "runs", "observations", "experiments", "reports", "logs", "import/profiles"]
 
 def _write_yaml(path, data: dict):
     with open(path, "w") as f:
@@ -54,3 +54,6 @@ class ProjectWorkspace:
         return self._memory
     @property
     def primary_metric(self): return self.config.get("primary_metric", "map50_95")
+    def record_event(self, operation, status, **metadata):
+        from .journal import record_event
+        return record_event(self, operation, status, **metadata)

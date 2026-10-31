@@ -6,8 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "cv-scientist"
 version = "0.1.0"
 description = "Daily research workspace for computer vision: diagnostics, experiment memory, and scientist agent"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["PyYAML>=6.0,<7", "Pillow>=10"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+cloud = ["modal==1.6.3"]
 
 [project.scripts]
 cv-scientist = "cv_scientist.cli:main"

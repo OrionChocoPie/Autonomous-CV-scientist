@@ -1,0 +1,488 @@
+{
+  "provenance": "Measured private-dataset case study; aggregates only, source data not redistributed",
+  "control": "E1-yolo26n-v1-20ep",
+  "validation_images": 1024,
+  "validation_objects": 1061,
+  "seed": 0,
+  "test_used": false,
+  "annotation_source": "v1 pseudo-labels; not asserted human-reviewed",
+  "metric_protocol": {
+    "ap_confidence_floor": 0.001,
+    "matching_iou": 0.5,
+    "default_confidence": 0.25,
+    "nms_iou": 0.7
+  },
+  "control_metrics": {
+    "tp": 641,
+    "fp": 316,
+    "fn": 420,
+    "precision": 0.6698014629049112,
+    "recall": 0.6041470311027333,
+    "f1": 0.6352824578790882,
+    "map50": 0.6692890169631829,
+    "map50_95": 0.3889407406396653,
+    "ultralytics_precision_best_f1": 0.7635631951672236,
+    "ultralytics_recall_best_f1": 0.565798765016258
+  },
+  "experiments": {
+    "C1-e1-parity": {
+      "mode": "inference_only",
+      "metrics": {
+        "tp": 641,
+        "fp": 316,
+        "fn": 420,
+        "precision": 0.6698014629049112,
+        "recall": 0.6041470311027333,
+        "f1": 0.6352824578790882,
+        "map50": 0.6692890169631829,
+        "map50_95": 0.3889407406396653,
+        "ultralytics_precision_best_f1": 0.7635631951672236,
+        "ultralytics_recall_best_f1": 0.565798765016258
+      },
+      "per_class": {
+        "smoke": {
+          "tp": 90,
+          "fp": 63,
+          "fn": 94,
+          "precision": 0.5882352941176471,
+          "recall": 0.4891304347826087,
+          "f1": 0.5341246290801187,
+          "map50": 0.5536286040112219,
+          "map50_95": 0.2634754617726674
+        },
+        "fire": {
+          "tp": 262,
+          "fp": 133,
+          "fn": 196,
+          "precision": 0.6632911392405063,
+          "recall": 0.5720524017467249,
+          "f1": 0.6143024618991794,
+          "map50": 0.6259284975199098,
+          "map50_95": 0.36957874293356696
+        },
+        "weapon": {
+          "tp": 168,
+          "fp": 77,
+          "fn": 88,
+          "precision": 0.6857142857142857,
+          "recall": 0.65625,
+          "f1": 0.6706586826347305,
+          "map50": 0.7071268759663054,
+          "map50_95": 0.4426559355374506
+        },
+        "knife": {
+          "tp": 121,
+          "fp": 43,
+          "fn": 42,
+          "precision": 0.7378048780487805,
+          "recall": 0.7423312883435583,
+          "f1": 0.7400611620795107,
+          "map50": 0.7904720903552944,
+          "map50_95": 0.4800528223149764
+        }
+      },
+      "native_files_sha256_verified": 17,
+      "canonical_ingest_noop_verified": true,
+      "validation_truth_unchanged": true,
+      "test_used": false,
+      "runtime": {
+        "validation_images": 1024,
+        "prediction_seconds": 5.800340470999998,
+        "prediction_ms_per_image_including_io_and_export": 5.664394991210936,
+        "model_ms_per_image": {
+          "preprocess": 2.26980231933594,
+          "inference": 1.8297659111328144,
+          "postprocess": 0.6828969072265711
+        },
+        "peak_allocated_gpu_bytes": 949579776,
+        "peak_reserved_gpu_bytes": 1883242496,
+        "elapsed_seconds": 25.055756754
+      },
+      "control_parity": "exact predictions and metrics"
+    },
+    "E2-close-mosaic5": {
+      "mode": "training",
+      "metrics": {
+        "tp": 649,
+        "fp": 325,
+        "fn": 412,
+        "precision": 0.6663244353182751,
+        "recall": 0.6116870876531574,
+        "f1": 0.6378378378378379,
+        "map50": 0.6654923297696398,
+        "map50_95": 0.38660194089300737,
+        "ultralytics_precision_best_f1": 0.7554476454557824,
+        "ultralytics_recall_best_f1": 0.5851828903601797
+      },
+      "per_class": {
+        "smoke": {
+          "tp": 93,
+          "fp": 67,
+          "fn": 91,
+          "precision": 0.58125,
+          "recall": 0.5054347826086957,
+          "f1": 0.5406976744186046,
+          "map50": 0.5492511036098294,
+          "map50_95": 0.27448066598858006
+        },
+        "fire": {
+          "tp": 267,
+          "fp": 147,
+          "fn": 191,
+          "precision": 0.644927536231884,
+          "recall": 0.5829694323144105,
+          "f1": 0.6123853211009175,
+          "map50": 0.642722977789187,
+          "map50_95": 0.37184776852246254
+        },
+        "weapon": {
+          "tp": 167,
+          "fp": 71,
+          "fn": 89,
+          "precision": 0.7016806722689075,
+          "recall": 0.65234375,
+          "f1": 0.6761133603238867,
+          "map50": 0.6940921620450334,
+          "map50_95": 0.44188328542672994
+        },
+        "knife": {
+          "tp": 122,
+          "fp": 40,
+          "fn": 41,
+          "precision": 0.7530864197530864,
+          "recall": 0.7484662576687117,
+          "f1": 0.7507692307692307,
+          "map50": 0.7759030756345093,
+          "map50_95": 0.45819604363425687
+        }
+      },
+      "native_files_sha256_verified": 61,
+      "canonical_ingest_noop_verified": true,
+      "validation_truth_unchanged": true,
+      "test_used": false,
+      "accepted": false,
+      "criteria": {
+        "fire_fp_max": {
+          "actual": 147,
+          "limit": 119,
+          "passed": false
+        },
+        "fire_recall_min": {
+          "actual": 0.5829694323144105,
+          "limit": 0.5620524017467249,
+          "passed": true
+        },
+        "smoke_recall_min": {
+          "actual": 0.5054347826086957,
+          "limit": 0.4791304347826087,
+          "passed": true
+        },
+        "overall_recall_min": {
+          "actual": 0.6116870876531574,
+          "limit": 0.5941470311027333,
+          "passed": true
+        },
+        "map50_95_min": {
+          "actual": 0.38660194089300737,
+          "limit": 0.3839407406396653,
+          "passed": true
+        }
+      },
+      "hypothesis_status": "rejected"
+    },
+    "E3-infer960": {
+      "mode": "inference_only",
+      "metrics": {
+        "tp": 645,
+        "fp": 348,
+        "fn": 416,
+        "precision": 0.649546827794562,
+        "recall": 0.6079170593779454,
+        "f1": 0.6280428432327166,
+        "map50": 0.6451394798576857,
+        "map50_95": 0.3656206683325983,
+        "ultralytics_precision_best_f1": 0.70291068276359,
+        "ultralytics_recall_best_f1": 0.59546165916545
+      },
+      "per_class": {
+        "smoke": {
+          "tp": 92,
+          "fp": 64,
+          "fn": 92,
+          "precision": 0.5897435897435898,
+          "recall": 0.5,
+          "f1": 0.5411764705882353,
+          "map50": 0.4943460788297708,
+          "map50_95": 0.24181382053214012
+        },
+        "fire": {
+          "tp": 265,
+          "fp": 135,
+          "fn": 193,
+          "precision": 0.6625,
+          "recall": 0.5786026200873362,
+          "f1": 0.6177156177156177,
+          "map50": 0.6518065772521202,
+          "map50_95": 0.3768893088028573
+        },
+        "weapon": {
+          "tp": 167,
+          "fp": 96,
+          "fn": 89,
+          "precision": 0.6349809885931559,
+          "recall": 0.65234375,
+          "f1": 0.6435452793834296,
+          "map50": 0.7050923629296819,
+          "map50_95": 0.44528598979890066
+        },
+        "knife": {
+          "tp": 121,
+          "fp": 53,
+          "fn": 42,
+          "precision": 0.6954022988505747,
+          "recall": 0.7423312883435583,
+          "f1": 0.7181008902077152,
+          "map50": 0.72931290041917,
+          "map50_95": 0.3984935541964952
+        }
+      },
+      "native_files_sha256_verified": 17,
+      "canonical_ingest_noop_verified": true,
+      "validation_truth_unchanged": true,
+      "test_used": false,
+      "accepted": false,
+      "criteria": {
+        "fire_recall_min": {
+          "actual": 0.5786026200873362,
+          "limit": 0.6020524017467249,
+          "passed": false
+        },
+        "smoke_recall_min": {
+          "actual": 0.5,
+          "limit": 0.5191304347826087,
+          "passed": false
+        },
+        "precision_min": {
+          "actual": 0.649546827794562,
+          "limit": 0.6598014629049112,
+          "passed": false
+        },
+        "map50_95_min": {
+          "actual": 0.3656206683325983,
+          "limit": 0.3889407406396653,
+          "passed": false
+        }
+      },
+      "hypothesis_status": "rejected",
+      "runtime": {
+        "validation_images": 1024,
+        "prediction_seconds": 11.582165080000003,
+        "prediction_ms_per_image_including_io_and_export": 11.310708085937502,
+        "model_ms_per_image": {
+          "preprocess": 4.807266848632774,
+          "inference": 4.916820934570309,
+          "postprocess": 0.671558888671857
+        },
+        "peak_allocated_gpu_bytes": 2068040704,
+        "peak_reserved_gpu_bytes": 4085252096,
+        "elapsed_seconds": 31.968080016000002
+      }
+    },
+    "E4-conf010": {
+      "mode": "inference_only",
+      "metrics": {
+        "tp": 736,
+        "fp": 825,
+        "fn": 325,
+        "precision": 0.4714926329276105,
+        "recall": 0.6936852026390198,
+        "f1": 0.5614035087719298,
+        "map50": 0.6692890169631829,
+        "map50_95": 0.3889407406396653,
+        "ultralytics_precision_best_f1": 0.7635631951672236,
+        "ultralytics_recall_best_f1": 0.565798765016258
+      },
+      "per_class": {
+        "smoke": {
+          "tp": 110,
+          "fp": 158,
+          "fn": 74,
+          "precision": 0.41044776119402987,
+          "recall": 0.5978260869565217,
+          "f1": 0.48672566371681414,
+          "map50": 0.5536286040112219,
+          "map50_95": 0.2634754617726674
+        },
+        "fire": {
+          "tp": 306,
+          "fp": 367,
+          "fn": 152,
+          "precision": 0.45468053491827637,
+          "recall": 0.6681222707423581,
+          "f1": 0.5411140583554377,
+          "map50": 0.6259284975199098,
+          "map50_95": 0.36957874293356696
+        },
+        "weapon": {
+          "tp": 186,
+          "fp": 189,
+          "fn": 70,
+          "precision": 0.496,
+          "recall": 0.7265625,
+          "f1": 0.589540412044374,
+          "map50": 0.7071268759663054,
+          "map50_95": 0.4426559355374506
+        },
+        "knife": {
+          "tp": 134,
+          "fp": 111,
+          "fn": 29,
+          "precision": 0.5469387755102041,
+          "recall": 0.8220858895705522,
+          "f1": 0.6568627450980392,
+          "map50": 0.7904720903552944,
+          "map50_95": 0.4800528223149764
+        }
+      },
+      "native_files_sha256_verified": 17,
+      "canonical_ingest_noop_verified": true,
+      "validation_truth_unchanged": true,
+      "test_used": false,
+      "accepted": false,
+      "criteria": {
+        "fire_recall_min": {
+          "actual": 0.6681222707423581,
+          "limit": 0.6220524017467249,
+          "passed": true
+        },
+        "or_smoke_recall_min": {
+          "actual": 0.5978260869565217,
+          "limit": 0.5391304347826087,
+          "passed": true
+        },
+        "overall_f1_strictly_greater_than": {
+          "actual": 0.5614035087719298,
+          "limit": 0.6352824578790882,
+          "passed": false
+        },
+        "precision_min": {
+          "actual": 0.4714926329276105,
+          "limit": 0.6398014629049111,
+          "passed": false
+        },
+        "fire_fp_max": {
+          "actual": 367,
+          "limit": 146,
+          "passed": false
+        }
+      },
+      "hypothesis_status": "rejected",
+      "runtime": {
+        "validation_images": 1024,
+        "prediction_seconds": 5.413675155,
+        "prediction_ms_per_image_including_io_and_export": 5.286792143554687,
+        "model_ms_per_image": {
+          "preprocess": 1.8457397031249996,
+          "inference": 1.8543149238281411,
+          "postprocess": 0.7103201298828183
+        },
+        "peak_allocated_gpu_bytes": 949580800,
+        "peak_reserved_gpu_bytes": 1883242496,
+        "elapsed_seconds": 24.518542074
+      }
+    },
+    "E5-train-reviewed-v2": {
+      "mode": "training",
+      "metrics": {
+        "tp": 626,
+        "fp": 324,
+        "fn": 435,
+        "precision": 0.6589473684210526,
+        "recall": 0.590009425070688,
+        "f1": 0.6225758329189458,
+        "map50": 0.6518599458779945,
+        "map50_95": 0.3862034072071518,
+        "ultralytics_precision_best_f1": 0.7237408750812009,
+        "ultralytics_recall_best_f1": 0.5847585294324685
+      },
+      "per_class": {
+        "smoke": {
+          "tp": 87,
+          "fp": 63,
+          "fn": 97,
+          "precision": 0.58,
+          "recall": 0.47282608695652173,
+          "f1": 0.5209580838323353,
+          "map50": 0.4950167094340028,
+          "map50_95": 0.24708501407788003
+        },
+        "fire": {
+          "tp": 259,
+          "fp": 131,
+          "fn": 199,
+          "precision": 0.6641025641025641,
+          "recall": 0.5655021834061136,
+          "f1": 0.6108490566037735,
+          "map50": 0.6364518604001087,
+          "map50_95": 0.37392653588944824
+        },
+        "weapon": {
+          "tp": 161,
+          "fp": 85,
+          "fn": 95,
+          "precision": 0.6544715447154471,
+          "recall": 0.62890625,
+          "f1": 0.6414342629482072,
+          "map50": 0.6768323728450163,
+          "map50_95": 0.4315043619498942
+        },
+        "knife": {
+          "tp": 119,
+          "fp": 45,
+          "fn": 44,
+          "precision": 0.725609756097561,
+          "recall": 0.7300613496932515,
+          "f1": 0.72782874617737,
+          "map50": 0.7991388408328503,
+          "map50_95": 0.4922977169113847
+        }
+      },
+      "native_files_sha256_verified": 60,
+      "canonical_ingest_noop_verified": true,
+      "validation_truth_unchanged": true,
+      "test_used": false,
+      "accepted": false,
+      "criteria": {
+        "fire_fp_max": {
+          "actual": 131,
+          "limit": 119,
+          "passed": false
+        },
+        "fire_recall_min": {
+          "actual": 0.5655021834061136,
+          "limit": 0.5620524017467249,
+          "passed": true
+        },
+        "smoke_recall_min": {
+          "actual": 0.47282608695652173,
+          "limit": 0.4791304347826087,
+          "passed": false
+        },
+        "map50_95_min": {
+          "actual": 0.3862034072071518,
+          "limit": 0.3889407406396653,
+          "passed": false
+        }
+      },
+      "hypothesis_status": "active",
+      "interpretation": "Audit confirms duplicate annotations; this small duplicate-only correction did not pass improvement criteria on frozen v1 validation. Broader data-quality hypothesis remains active."
+    }
+  },
+  "audit": {
+    "removed_duplicate_boxes": 66,
+    "changed_train_images": 65,
+    "uncertain_pairs_preserved": 23,
+    "empty_images_reviewed": 100,
+    "human_reviewed": false
+  }
+}
