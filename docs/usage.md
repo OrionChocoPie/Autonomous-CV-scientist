@@ -111,6 +111,7 @@ an uninitialized directory returns `workspace_not_found` without creating a work
 | `import` | Full import report, including `runs`, `skipped`, `usage`, `path` |
 | `ask --agent offline` | `provider`, `answer`, `evidence`, `confidence` |
 | `ask --agent meta`, `research --agent meta` | `provider`, `report` |
+| `annotate-dataset` | `provider`, `report` with `output`, `path`, classes/prompts, image/box counts and source mappings |
 | `research --agent offline` | `provider`, `result` (planned hypotheses do not imply execution) |
 | `note`, `session`, `timeline` | `note`, `session`, or `events`, respectively |
 | `report`, `config` | `path`; `config` still requires hidden interactive input |
@@ -265,6 +266,69 @@ to confirmed research conclusions.
 API references: [Meta tool calling](https://dev.meta.ai/docs/tool-calling),
 [structured output](https://dev.meta.ai/docs/structured-output),
 [image understanding](https://dev.meta.ai/docs/image-understanding).
+
+## Dataset annotation with SAM 3.1
+
+Describe the desired objects and export automatic YOLO detection labels through
+Meta API, using the same key configured for Muse:
+
+```bash
+source .venv/bin/activate
+cv-scientist --project /path/to/project annotate-dataset /path/to/dataset \
+  "Разметь всех людей и автомобили отдельными классами" \
+  --output /path/to/new-yolo-dataset --json
+```
+
+An initialized workspace and Meta account access to both the planning model and
+`sam-3.1` are required. `--model` selects the Muse planning model; SAM always uses
+`sam-3.1`. Credentials, model selection and API URL use the existing Meta
+configuration. No GPU, additional package or separate SAM key is required.
+
+Muse receives the description, measured dataset statistics and up to four sample
+previews. It returns an ordered list of 1–32 classes, one short English concept
+prompt per class and limitations. Class IDs start at zero in that order; existing
+annotations are context, are not merged and do not determine the new IDs. SAM is
+then called once for **every image and every class**, using full-resolution PNGs
+after EXIF orientation correction, through `POST /v1/responses` on Meta API.
+There is one planning request plus images × classes SAM requests; all images
+are transmitted to Meta and API usage applies. Progress goes to stderr.
+
+The new directory contains:
+
+- `data.yaml` with class names and available train/val/test image lists.
+- `images/<split>/<number>.png` and corresponding
+  `labels/<split>/<number>.txt` with normalized `class cx cy w h` rows.
+- `<split>.txt` lists, preserving existing split membership. Images without a
+  split go to train; no new validation split is invented.
+- `annotation.json` with the description, class prompts, planner sample and
+  usage, SAM request count, source hashes and filename mappings, image/box
+  counts and limitations. It omits credentials, image bytes and SAM masks.
+
+SAM's inclusive pixel edges are converted to YOLO extents, including one-pixel
+and full-image boxes. A valid completed zero-match response writes an empty
+label file. These are **draft labels**, including possible false negatives and
+false positives; empty labels do not certify backgrounds. Review them before
+training. Unsupported conditions such as negation or relational reasoning cannot
+be guaranteed by concept prompting. Masks are discarded without decoding.
+
+The source folder and existing annotations are never changed. The output must be
+a new, separate directory. Reusing an existing output fails before a model call;
+choose another path to rerun. Empty datasets, unreadable/missing images,
+symlink image files and overlapping split memberships fail before model calls.
+Directory traversal and files changed since scanning are rejected. Hidden and
+symlink directories are excluded under the existing dataset audit rules. Local
+PNG/JPEG/WebP/BMP/TIFF input, up to 100,000 images, 32 MiB per file/normalized PNG
+and 40 million pixels per image are supported. The SAM response limit is 32 MiB.
+
+Provider errors (including rate limits and missing SAM access), incomplete or
+malformed replies and dimension/out-of-bounds box errors fail explicitly; they
+never become empty labels. Work is staged and published only after every image
+succeeds. Failed staging is removed; there is no resume or automatic retry, and
+requests already made still count as API usage.
+
+Protocol references: [Meta SAM overview](https://dev.meta.ai/docs/sam/overview),
+[prompt format](https://dev.meta.ai/docs/sam/segmenting),
+[box wire grammar](https://github.com/meta-models/meta-sam/blob/main/protocol/sam3.md).
 
 ## Dataset quality review
 

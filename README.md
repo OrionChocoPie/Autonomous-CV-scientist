@@ -77,6 +77,7 @@ Reference validation does not prove every causal explanation. See
 | Diagnostics | Class-aware FP/FN matching, localization/duplicate/background groups and class confusion |
 | Meta investigation | Tool-using Muse agent with original-image inspection and validated evidence references |
 | Dataset review | Read-only YOLO/image audit plus a bounded Meta visual sample; reports actual coverage |
+| Dataset annotation | Muse converts your description into per-class SAM 3.1 prompts; Meta API labels every image into a separate YOLO detection dataset |
 | Existing run import | Meta-assisted field mapping from local/SSH results into immutable local metadata copies |
 | Experiment memory | SQLite history, FTS5 search, hypotheses, questions, conclusions and user notes |
 | Bounded research | Confidence-only or resolution-only evaluation through the supported external adapter; budgets and crash recovery |
@@ -88,6 +89,21 @@ it is separate from the synthetic demo. General-purpose autonomous training and
 an autonomous Modal training loop are not implemented. The optional Modal
 scripts in `scripts/` are manually invoked case-study launchers for existing
 private volumes, not a prerequisite for the public demo.
+
+To annotate your own local image folder using the configured Meta key:
+
+```bash
+source .venv/bin/activate
+cv-scientist --project demo-workspace annotate-dataset /path/to/images \
+  "Annotate every person and car" --output /path/to/new-yolo-dataset --json
+```
+
+Muse plans the classes from your description and up to four previews, then
+`sam-3.1` processes every image once per class through Meta's Responses API.
+The new directory contains `data.yaml`, images, YOLO boxes and an annotation
+manifest with prompts and source mappings. Existing source labels stay intact.
+These are draft labels for human review. This sends every image to Meta, requires
+SAM account access and incurs API usage. See [annotation details](docs/usage.md#dataset-annotation-with-sam-31).
 
 ## How it fits together
 

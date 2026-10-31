@@ -95,6 +95,11 @@ def _main(argv, json_mode, state):
     sp.add_argument("--agent", choices=["offline", "meta"], default=None)
     sp.add_argument("--model", default=None)
     sp.add_argument("--max-steps", type=int, default=8)
+    sp = sub.add_parser("annotate-dataset", help="Use Meta Muse and SAM 3.1 to export a new YOLO detection dataset")
+    sp.add_argument("source", help="Local image/YOLO dataset directory")
+    sp.add_argument("description", help="Describe the classes and objects to annotate")
+    sp.add_argument("--output", required=True, help="New output directory, separate from the source dataset")
+    sp.add_argument("--model", default=None, help="Meta Muse planning model; segmentation always uses sam-3.1")
     sp = sub.add_parser("review-dataset", help="Review a local image/YOLO dataset with Meta and save an evidence report")
     sp.add_argument("source", help="Local dataset directory, optionally containing data.yaml or dataset.yaml")
     sp.add_argument("--agent", choices=["meta"], default="meta")
@@ -276,6 +281,23 @@ def _dispatch(args):
             _human(args, ans.text); _human(args, f"Evidence: {[e['id'] for e in ans.evidence]}")
         else:
             return _fail(args, "invalid_arguments", "Unknown agent_provider in project.yaml")
+    elif args.cmd == "annotate-dataset":
+        import logging
+        from .annotation import DatasetAnnotationAgent
+        from .meta import MetaClient, MetaConfig, MetaAPIError
+        from .sam import SamClient
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        try:
+            config = MetaConfig.from_workspace(ws, args.model)
+            report = DatasetAnnotationAgent(ws, MetaClient(config), SamClient(config)).annotate(
+                args.source, args.description, args.output)
+        except (MetaAPIError, ValueError, OSError) as error:
+            return _fail(args, _error(error).code, f"Dataset annotation error: {error}")
+        data = {"provider": "meta", "report": report}
+        _human(args, f"Annotated {report['images']} images, {report['objects']} boxes ({report['empty_images']} empty images)")
+        for limitation in report["limitations"]: _human(args, f"Limitation: {limitation}")
+        _human(args, f"Dataset: {report['output']}/data.yaml")
+        _human(args, f"Report: {report['path']}")
     elif args.cmd == "review-dataset":
         import logging
         from .dataset_review import DatasetReviewAgent
