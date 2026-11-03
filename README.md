@@ -8,11 +8,6 @@ class-aware error analysis and a Meta Muse agent in a local workspace. Findings
 link back to experiments and image records; proposed improvements remain
 hypotheses until measured evaluations support them.
 
-Built for the **Push the Frontier** problem statement in the Meta Global AI
-Developer Hackathon. See [original contributions](docs/contributions.md),
-[submission requirements and judging rubric](docs/hackathon.md), and the
-[three-minute demo script](docs/demo.md).
-
 ## Why it exists
 
 A better aggregate score can hide worse recall for small defects. Training logs,
@@ -24,10 +19,27 @@ configurations, inspect FP/FN images, ask Muse to investigate, and retain the
 result for the next decision. Its current target user is a CV engineer improving
 an object detector, including industrial inspection workflows.
 
+## Install from GitHub
+
+With Python 3.10+ and Git installed, run this from your CV project directory:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install "git+https://github.com/OrionChocoPie/Autonomous-CV-scientist.git"
+cv-scientist init
+cv-scientist --help
+```
+
+Run `cv-scientist config` to configure your Meta API key when you want to use
+the Meta-powered commands.
+
 ## Try it locally
 
 Python 3.10+ with SQLite FTS5. The public demo needs no API key, GPU, private
 dataset or external training project.
+
+For development and the public demo, run the following from a cloned checkout:
 
 ```bash
 python3 -m venv .venv
